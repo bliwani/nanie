@@ -52,46 +52,46 @@ function getTheme(mode: Mode) {
   if (mode === "dark") {
     return {
       mode,
-      bg: "#080B14",
-      surface: "#0F1424",
-      surface2: "#141B30",
-      inputBg: "#0B1020",
-      border: "#212B47",
-      borderStrong: "#2C3860",
-      text: "#E6ECFA",
-      textMuted: "#8A97B8",
-      accent: "#4FD8FF",
-      accent2: "#7C6CFF",
-      accentText: "#04121C",
-      glow: "rgba(79,216,255,0.55)",
+      bg: "#160812",
+      surface: "#20101B",
+      surface2: "#2A1524",
+      inputBg: "#190A15",
+      border: "#3B2130",
+      borderStrong: "#512B41",
+      text: "#FCEAF3",
+      textMuted: "#C99BB4",
+      accent: "#FF6FB5",
+      accent2: "#FF9AD1",
+      accentText: "#2A0A18",
+      glow: "rgba(255,111,181,0.5)",
       danger: "#FF6B7D",
       success: "#4FE0A6",
-      dot: "rgba(255,255,255,0.05)",
-      overlay: "rgba(3,6,14,0.72)",
+      dot: "rgba(255,182,214,0.06)",
+      overlay: "rgba(12,4,9,0.72)",
       shadow: "0 18px 50px rgba(0,0,0,0.55)",
       shadowSoft: "0 8px 24px rgba(0,0,0,0.4)",
     }
   }
   return {
     mode,
-    bg: "#FFFFFF",
-    surface: "#F1F3F5",
+    bg: "#FFF6FB",
+    surface: "#FCE7F1",
     surface2: "#FFFFFF",
     inputBg: "#FFFFFF",
-    border: "#E2E6EA",
-    borderStrong: "#CBD2D9",
-    text: "#0B1220",
-    textMuted: "#5B6577",
-    accent: "#0FA3A3",
-    accent2: "#14B8A6",
+    border: "#F6D2E4",
+    borderStrong: "#ECB4D2",
+    text: "#3B1329",
+    textMuted: "#98657F",
+    accent: "#E24A93",
+    accent2: "#F58BC2",
     accentText: "#FFFFFF",
-    glow: "rgba(15,163,163,0.4)",
+    glow: "rgba(226,74,147,0.32)",
     danger: "#DC2626",
     success: "#0F9D6C",
-    dot: "rgba(11,18,32,0.06)",
-    overlay: "rgba(15,20,30,0.4)",
-    shadow: "0 18px 50px rgba(15,23,42,0.14)",
-    shadowSoft: "0 8px 24px rgba(15,23,42,0.08)",
+    dot: "rgba(150,40,95,0.07)",
+    overlay: "rgba(60,20,40,0.4)",
+    shadow: "0 18px 50px rgba(120,30,80,0.16)",
+    shadowSoft: "0 8px 24px rgba(120,30,80,0.10)",
   }
 }
 
@@ -434,7 +434,7 @@ function GlobalStyles() {
       @keyframes nanie-spin { to { transform: rotate(360deg); } }
       @keyframes nanie-toast-in { from { opacity: 0; transform: translateX(20px) scale(0.98); } to { opacity: 1; transform: translateX(0) scale(1); } }
       @keyframes nanie-fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-      ::selection { background: rgba(124,108,255,0.35); }
+      ::selection { background: rgba(255,111,181,0.35); }
     `}</style>
   )
 }
@@ -519,8 +519,8 @@ function Button({
     },
     accent2: {
       background: t.accent2,
-      color: "#fff",
-      boxShadow: hover ? "0 8px 22px rgba(124,108,255,0.4)" : t.shadowSoft,
+      color: t.mode === "dark" ? "#2A0A18" : "#fff",
+      boxShadow: hover ? `0 8px 22px ${t.glow}` : t.shadowSoft,
     },
     ghost: {
       background: hover ? t.surface2 : "transparent",
@@ -1137,27 +1137,33 @@ function Generator({
   const [shown, setShown] = useState("")
   const [streaming, setStreaming] = useState(false)
   const [imgLoading, setImgLoading] = useState(false)
-  const [svg, setSvg] = useState("")
+  const [imgSrc, setImgSrc] = useState("")
+  const [imgExt, setImgExt] = useState<"png" | "svg">("png")
+  const [imgError, setImgError] = useState("")
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
       if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      if (abortRef.current) abortRef.current.abort()
     }
   }, [])
 
   const isImage = genType === "image"
-  const hasOutput = isImage ? !!svg : !!fullText
+  const hasOutput = isImage ? !!imgSrc : !!fullText
   const active = streaming || imgLoading
 
   const reset = () => {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    if (abortRef.current) abortRef.current.abort()
     setFullText("")
     setShown("")
-    setSvg("")
+    setImgSrc("")
+    setImgError("")
     setStreaming(false)
     setImgLoading(false)
   }
@@ -1170,13 +1176,38 @@ function Generator({
     reset()
     if (isImage) {
       setImgLoading(true)
-      timeoutRef.current = setTimeout(() => {
-        setSvg(buildImageSVG(genPrompt))
-        setImgLoading(false)
-        onContentGenerated()
-        addActivity(`Generated an image for “${titleFromPrompt(genPrompt)}”`)
-        addToast("Image rendered.", "success")
-      }, 1100)
+      setImgError("")
+      const controller = new AbortController()
+      abortRef.current = controller
+      const promptText = genPrompt.trim()
+      fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: promptText }),
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(data?.error || "The AI image model is unavailable.")
+          setImgSrc(data.dataUrl)
+          setImgExt("png")
+          setImgLoading(false)
+          onContentGenerated()
+          addActivity(`Generated an AI image for “${titleFromPrompt(promptText)}”`)
+          addToast("Image generated.", "success")
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return
+          // Graceful fallback: a deterministic, stylized SVG derived from the prompt.
+          const svg = buildImageSVG(promptText)
+          setImgSrc(`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`)
+          setImgExt("svg")
+          setImgError(err instanceof Error ? err.message : "AI image unavailable.")
+          setImgLoading(false)
+          onContentGenerated()
+          addActivity(`Rendered a placeholder image for “${titleFromPrompt(promptText)}”`)
+          addToast("AI image failed — showing a stylized placeholder.", "error")
+        })
       return
     }
     const text = buildTemplate(genType, genPrompt)
@@ -1212,7 +1243,12 @@ function Generator({
   const download = () => {
     const name = titleFromPrompt(genPrompt).replace(/\s+/g, "-").toLowerCase() || "nanie"
     if (isImage) {
-      triggerDownload(svg, `${name}.svg`, "image/svg+xml")
+      const a = document.createElement("a")
+      a.href = imgSrc
+      a.download = `${name}.${imgExt}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
     } else if (genType === "code") {
       triggerDownload(fullText, `${name}.txt`, "text/plain")
     } else {
@@ -1382,12 +1418,22 @@ function Generator({
               </div>
             )}
 
-            {isImage && svg && !imgLoading && (
-              <div
-                style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${t.border}`, lineHeight: 0 }}
-                // deterministic, self-generated SVG string (safe)
-                dangerouslySetInnerHTML={{ __html: svg.replace("<svg", '<svg style="width:100%;height:auto;display:block"') }}
-              />
+            {isImage && imgSrc && !imgLoading && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${t.border}`, lineHeight: 0 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imgSrc || "/placeholder.svg"}
+                    alt={`AI generated art for “${titleFromPrompt(genPrompt)}”`}
+                    style={{ width: "100%", height: "auto", display: "block" }}
+                  />
+                </div>
+                {imgError && (
+                  <p style={{ fontSize: 12, color: t.textMuted, margin: 0, lineHeight: 1.5 }}>
+                    Couldn&apos;t reach the AI image model ({imgError}). Showing a stylized placeholder instead.
+                  </p>
+                )}
+              </div>
             )}
 
             {!isImage && (fullText || streaming) && (
